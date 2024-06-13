@@ -22,9 +22,10 @@ import (
 
 var sessionCache = cache.New(5)
 var commands = map[string]func(http.ResponseWriter, *http.Request, *vehicle.Vehicle, map[string]interface{}){
-	"pair":              pairVehicle,
+	"pair":              cmdPairVehicle,
 	"wake_up":           cmdWakeUp,
 	"set_charging_amps": cmdSetChargingAmps,
+	"set_soc_limit":     cmdSetSocLimit,
 	"charge_start":      cmdChargeStart,
 	"charge_stop":       cmdChargeStop,
 }
@@ -114,7 +115,7 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 	cmdFunc(w, r, car, body)
 }
 
-func pairVehicle(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+func cmdPairVehicle(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -152,6 +153,29 @@ func cmdSetChargingAmps(w http.ResponseWriter, r *http.Request, car *vehicle.Veh
 
 	if err := car.SetChargingAmps(ctx, int32(chargingAmps)); err != nil {
 		log.Printf("Failed to set charging amps: %s\n", err)
+	}
+}
+
+func cmdSetSocLimit(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	socLimitString, ok := body["soc_limit"].(string)
+	if !ok {
+		log.Printf("Failed to find soc_limit in request body\n")
+		sendBadRequest(w)
+		return
+	}
+
+	socLimit, err := strconv.ParseInt(socLimitString, 10, 32)
+	if err != nil {
+		log.Printf("Failed to parse soc_limit to int: %s\n", err)
+		sendBadRequest(w)
+		return
+	}
+
+	if err := car.ChangeChargeLimit(ctx, int32(socLimit)); err != nil {
+		log.Printf("Failed to set soc limit: %s\n", err)
 	}
 }
 

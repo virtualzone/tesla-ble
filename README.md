@@ -52,7 +52,7 @@ A simple HTTP server sending commands controlling your Tesla's charging process 
    http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/set_charging_amps
    ```
 
-### Wake charging limit
+### Set charging limit
    ```
    curl -X POST \
    -d '{"soc_limit": 70}' \

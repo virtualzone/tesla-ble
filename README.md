@@ -93,9 +93,9 @@ vehicles:
       uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/set_soc_limit"
       method: POST
       body: '{"soc_limit": "{{.limitsoc}}"}'
-    enable:
+    chargeenable:
       source: http
-      uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/{{if .enable}}charge_start{{else}}charge_stop{{end}}"
+      uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/{{if .chargeenable}}charge_start{{else}}charge_stop{{end}}"
       method: POST
       body: ''
 ```

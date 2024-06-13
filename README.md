@@ -80,7 +80,7 @@ vehicles:
     capacity: 78
     wakeup:
       source: http
-      uri: http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/wake_up
+      uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/wake_up"
       method: POST
       body: ''
     maxcurrent:

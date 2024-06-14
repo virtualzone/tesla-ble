@@ -20,8 +20,10 @@ import (
 	"github.com/teslamotors/vehicle-command/pkg/vehicle"
 )
 
+type cmdFunction func(http.ResponseWriter, *http.Request, *vehicle.Vehicle, map[string]interface{}) error
+
 var sessionCache = cache.New(5)
-var commands = map[string]func(http.ResponseWriter, *http.Request, *vehicle.Vehicle, map[string]interface{}){
+var commands = map[string]cmdFunction{
 	"pair":              cmdPairVehicle,
 	"wake_up":           cmdWakeUp,
 	"set_charging_amps": cmdSetChargingAmps,
@@ -47,6 +49,17 @@ func sendInternalServerError(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusInternalServerError)
 }
 
+func sendJSON(w http.ResponseWriter, v interface{}) {
+	json, err := json.Marshal(v)
+	if err != nil {
+		log.Println(err)
+		sendInternalServerError(w)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(json)
+}
+
 func handleCommand(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	vin := vars["vin"]
@@ -70,7 +83,7 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Tesla BLE: Executing command %s for VIN %s ...\n", command, vin)
+	log.Printf("Executing command %s for VIN %s ...\n", command, vin)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -112,89 +125,101 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 
 	cancel()
 
-	cmdFunc(w, r, car, body)
+	tries := 1
+	for tries <= 3 {
+		if tries > 1 {
+			log.Printf("Retry %d of command %s for VIN %s ...\n", tries, command, vin)
+		}
+		if err = cmdFunc(w, r, car, body); err != nil {
+			log.Printf("Failed to process request: %s\n", err)
+			tries++
+		} else {
+			sendJSON(w, true)
+			return
+		}
+	}
+	log.Printf("Giving up on command %s for VIN %s after too many reties\n", command, vin)
+	sendBadRequest(w)
 }
 
-func cmdPairVehicle(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+func cmdPairVehicle(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := car.SendAddKeyRequest(ctx, GetConfig().PublicKey, true, vcsec.KeyFormFactor_KEY_FORM_FACTOR_UNKNOWN); err != nil {
-		log.Printf("Failed to send add key request: %s\n", err)
+		return fmt.Errorf("failed to send add key request: %s", err)
 	}
+	return nil
 }
 
-func cmdWakeUp(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+func cmdWakeUp(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := car.Wakeup(ctx); err != nil {
-		log.Printf("Failed to wake up vehicle: %s\n", err)
+		return fmt.Errorf("failed to wake up vehicle: %s", err)
 	}
+	return nil
 }
 
-func cmdSetChargingAmps(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+func cmdSetChargingAmps(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	chargingAmpsString, ok := body["charging_amps"].(string)
 	if !ok {
-		log.Printf("Failed to find charging_amps in request body\n")
-		sendBadRequest(w)
-		return
+		return fmt.Errorf("failed to find charging_amps in request body")
 	}
 
 	chargingAmps, err := strconv.ParseInt(chargingAmpsString, 10, 32)
 	if err != nil {
-		log.Printf("Failed to parse charging_amps to int: %s\n", err)
-		sendBadRequest(w)
-		return
+		return fmt.Errorf("failed to parse charging_amps to int: %s", err)
 	}
 
 	if err := car.SetChargingAmps(ctx, int32(chargingAmps)); err != nil {
-		log.Printf("Failed to set charging amps: %s\n", err)
+		return fmt.Errorf("failed to set charging amps: %s", err)
 	}
+	return nil
 }
 
-func cmdSetSocLimit(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+func cmdSetSocLimit(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	socLimitString, ok := body["soc_limit"].(string)
 	if !ok {
-		log.Printf("Failed to find soc_limit in request body\n")
-		sendBadRequest(w)
-		return
+		return fmt.Errorf("failed to find soc_limit in request body")
 	}
 
 	socLimit, err := strconv.ParseInt(socLimitString, 10, 32)
 	if err != nil {
-		log.Printf("Failed to parse soc_limit to int: %s\n", err)
-		sendBadRequest(w)
-		return
+		return fmt.Errorf("failed to parse soc_limit to int: %s", err)
 	}
 
 	if err := car.ChangeChargeLimit(ctx, int32(socLimit)); err != nil {
-		log.Printf("Failed to set soc limit: %s\n", err)
+		return fmt.Errorf("failed to set soc limit: %s", err)
 	}
+	return nil
 }
 
-func cmdChargeStart(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+func cmdChargeStart(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := car.ChargeStart(ctx); err != nil {
-		log.Printf("Failed to start charging: %s\n", err)
+		return fmt.Errorf("failed to start charging: %s", err)
 	}
+	return nil
 }
 
-func cmdChargeStop(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) {
+func cmdChargeStop(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := car.ChargeStop(ctx); err != nil {
-		log.Printf("Failed to stop charging: %s\n", err)
+		return fmt.Errorf("failed to stop charging: %s", err)
 	}
+	return nil
 }
 
 func serveHTTP() {

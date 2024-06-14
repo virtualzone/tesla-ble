@@ -12,19 +12,21 @@ A simple HTTP server sending commands controlling your Tesla's charging process 
 
    ```yaml
    services:
-      server:
-         image: ghcr.io/virtualzone/tesla-ble:latest
-         restart: always
-         ports:
-            - 8080:8080
-         environment:
-            PORT: '8080'
-            PRIVATE_KEY: '/app/private.pem'
-            PUBLIC_KEY: '/app/public.pem'
-         volumes:
-            - './private.pem:/app/private.pem'
-            - './public.pem:/app/public.pem'
-   ```
+     tesla-ble:
+        image: ghcr.io/virtualzone/tesla-ble:latest
+        container_name: tesla-ble
+        restart: always
+        volumes:
+           - './private.pem:/app/private.pem'
+           - './public.pem:/app/public.pem'
+           - '/var/run/dbus:/var/run/dbus'
+           - '/run/dbus:/run/dbus:ro'
+        privileged: true
+        network_mode: host
+        cap_add:
+           - NET_ADMIN
+           - SYS_ADMIN
+    ```
 1. Get into your car, have your key card ready, call the following endpoint to send a BLE pairing request to your Tesla and follow the instructions on screen (replace VEHICLE_VIN with your vehicle's VIN):
 
    ```

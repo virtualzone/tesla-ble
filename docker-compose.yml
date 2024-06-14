@@ -1,0 +1,15 @@
+services:
+  tesla-ble:
+    image: ghcr.io/virtualzone/tesla-ble:latest
+    container_name: tesla-ble
+    restart: always
+    volumes:
+      - './private.pem:/app/private.pem'
+      - './public.pem:/app/public.pem'
+      - '/var/run/dbus:/var/run/dbus'
+      - '/run/dbus:/run/dbus:ro'
+    privileged: true
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN

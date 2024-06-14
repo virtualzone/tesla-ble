@@ -121,9 +121,20 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 			domains = []universalmessage.Domain{protocol.DomainVCSEC}
 		}
 		if err := car.StartSession(ctx, domains); err != nil {
-			log.Printf("Failed to perform handshake with vehicle: %s\n", err)
-			sendInternalServerError(w)
-			return
+			if strings.Contains(err.Error(), "context deadline exceeded") && command != "wake_up" {
+				log.Println("Vehicle is asleep, trying to wake it first...")
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := car.StartSession(ctx, []universalmessage.Domain{protocol.DomainVCSEC}); err != nil {
+					log.Printf("Could not wake vehicle: %s\n", err)
+					sendInternalServerError(w)
+					return
+				}
+			} else {
+				log.Printf("Failed to perform handshake with vehicle: %s", err)
+				sendInternalServerError(w)
+				return
+			}
 		}
 	}
 	defer car.UpdateCachedSessions(sessionCache)
@@ -136,20 +147,8 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Retry %d of command %s for VIN %s ...\n", tries, command, vin)
 		}
 		if err = cmdFunc(w, r, car, body); err != nil {
-			if strings.Contains(err.Error(), "context deadline exceeded") && tries == 1 && command != "wake_up" {
-				log.Println("Vehicle is asleep, trying to wake it first...")
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := car.StartSession(ctx, []universalmessage.Domain{protocol.DomainVCSEC}); err != nil {
-					log.Printf("Could not wake vehicle: %s\n", err)
-					sendInternalServerError(w)
-					return
-				}
-				tries++
-			} else {
-				log.Printf("Failed to process command %s: %s\n", command, err)
-				tries++
-			}
+			log.Printf("Failed to process command %s: %s\n", command, err)
+			tries++
 		} else {
 			log.Printf("Successfully processed command %s\n", command)
 			sendJSON(w, true)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -160,7 +161,7 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 			sendInternalServerError(w)
 			return
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 
 	if err := execCommand(vin, command, body); err != nil {
@@ -249,6 +250,9 @@ func cmdChargeStart(car *vehicle.Vehicle, body map[string]interface{}) error {
 	defer cancel()
 
 	if err := car.ChargeStart(ctx); err != nil {
+		if strings.Contains(err.Error(), "already_started") || strings.Contains(err.Error(), "is_charging") {
+			return nil
+		}
 		return fmt.Errorf("failed to start charging: %s", err)
 	}
 	return nil
@@ -259,6 +263,9 @@ func cmdChargeStop(car *vehicle.Vehicle, body map[string]interface{}) error {
 	defer cancel()
 
 	if err := car.ChargeStop(ctx); err != nil {
+		if strings.Contains(err.Error(), "not_charging") {
+			return nil
+		}
 		return fmt.Errorf("failed to stop charging: %s", err)
 	}
 	return nil

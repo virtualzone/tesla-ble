@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,7 +22,7 @@ import (
 	"github.com/teslamotors/vehicle-command/pkg/vehicle"
 )
 
-type cmdFunction func(http.ResponseWriter, *http.Request, *vehicle.Vehicle, map[string]interface{}) error
+type cmdFunction func(*vehicle.Vehicle, map[string]interface{}) error
 
 var sessionCache = cache.New(5)
 var commands = map[string]cmdFunction{
@@ -29,6 +30,7 @@ var commands = map[string]cmdFunction{
 	"wake_up":           cmdWakeUp,
 	"set_charging_amps": cmdSetChargingAmps,
 	"set_soc_limit":     cmdSetSocLimit,
+	"charge":            cmdChargeEnable,
 	"charge_start":      cmdChargeStart,
 	"charge_stop":       cmdChargeStop,
 }
@@ -61,8 +63,79 @@ func sendJSON(w http.ResponseWriter, v interface{}) {
 	w.Write(json)
 }
 
-func execCommand(w http.ResponseWriter, r *http.Request, command string) {
+func prepareConnection(vin string, command string) (error, *vehicle.Vehicle, *ble.Connection) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
+	conn, err := ble.NewConnection(ctx, vin)
+	if err != nil {
+		return fmt.Errorf("failed to create BLE connection to vehicle: %s", err), nil, nil
+	}
+
+	car, err := vehicle.NewVehicle(conn, GetConfig().PrivateKey, sessionCache)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to create vehicle: %s", err), nil, conn
+	}
+
+	if err := car.Connect(ctx); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to connect to vehicle: %s", err), nil, conn
+	}
+
+	if command != "pair" {
+		var domains []universalmessage.Domain = nil
+		if command == "wake_up" {
+			domains = []universalmessage.Domain{protocol.DomainVCSEC}
+		}
+		if err := car.StartSession(ctx, domains); err != nil {
+			car.Disconnect()
+			conn.Close()
+			return fmt.Errorf("failed to perform handshake with vehicle: %s", err), nil, conn
+		}
+	}
+	defer car.UpdateCachedSessions(sessionCache)
+
+	return nil, car, conn
+}
+
+func retryCommand(vin string, command string, car *vehicle.Vehicle, cmdFunc cmdFunction, body map[string]interface{}) error {
+	tries := 1
+	for tries <= 3 {
+		if tries > 1 {
+			log.Printf("Retry %d of command %s for VIN %s ...\n", tries, command, vin)
+		}
+		if err := cmdFunc(car, body); err != nil {
+			log.Printf("Failed to process command %s: %s\n", command, err)
+			tries++
+		} else {
+			log.Printf("Successfully processed command %s\n", command)
+			return nil
+		}
+	}
+	log.Printf("Giving up on command %s for VIN %s after too many reties\n", command, vin)
+	return errors.New("too many retries")
+}
+
+func execCommand(vin string, command string, body map[string]interface{}) error {
+	cmdFunc, ok := commands[command]
+	if !ok {
+		return fmt.Errorf("invalid command %s", command)
+	}
+
+	log.Printf("Executing command %s for VIN %s ...\n", command, vin)
+
+	err, car, conn := prepareConnection(vin, command)
+	if err != nil {
+		return fmt.Errorf("could not prepare vehicle connection: %s", err)
+	}
+	defer conn.Close()
+	defer car.Disconnect()
+
+	if err := retryCommand(vin, command, car, cmdFunc, body); err != nil {
+		return fmt.Errorf("retrying command %s failed: %s", command, err)
+	}
+	return nil
 }
 
 func handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -75,12 +148,6 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmdFunc, ok := commands[command]
-	if !ok {
-		sendNotFound(w)
-		return
-	}
-
 	var body map[string]interface{} = nil
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err.Error() != "EOF" {
 		log.Printf("Error decoding body: %s\n", err)
@@ -90,76 +157,29 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Executing command %s for VIN %s ...\n", command, vin)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	conn, err := ble.NewConnection(ctx, vin)
-	if err != nil {
-		log.Printf("Failed to connect to vehicle: %s", err)
-		sendInternalServerError(w)
-		return
-	}
-	defer conn.Close()
-
-	car, err := vehicle.NewVehicle(conn, GetConfig().PrivateKey, sessionCache)
-	if err != nil {
-		log.Printf("Failed to connect to vehicle: %s", err)
-		sendInternalServerError(w)
-		return
-	}
-
-	if err := car.Connect(ctx); err != nil {
-		log.Printf("Failed to connect to vehicle: %s", err)
-		sendInternalServerError(w)
-		return
-	}
-	defer car.Disconnect()
-
-	if command != "pair" {
-		var domains []universalmessage.Domain = nil
-		if command == "wake_up" {
-			domains = []universalmessage.Domain{protocol.DomainVCSEC}
-		}
-		if err := car.StartSession(ctx, domains); err != nil {
-			if strings.Contains(err.Error(), "context deadline exceeded") && command != "wake_up" {
-				log.Println("Vehicle is asleep, trying to wake it first...")
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := car.StartSession(ctx, []universalmessage.Domain{protocol.DomainVCSEC}); err != nil {
-					log.Printf("Could not wake vehicle: %s\n", err)
-					sendInternalServerError(w)
-					return
-				}
-			} else {
-				log.Printf("Failed to perform handshake with vehicle: %s", err)
+	if err := execCommand(vin, command, body); err != nil {
+		if strings.Contains(err.Error(), "context deadline exceeded") && command != "wake_up" {
+			log.Printf("command %s failed, vehicle could be asleep - trying to wake first...\n", command)
+			if err := execCommand(vin, "wake_up", body); err != nil {
+				log.Printf("waking vehicle failed, giving up: %s\n", err)
 				sendInternalServerError(w)
 				return
 			}
-		}
-	}
-	defer car.UpdateCachedSessions(sessionCache)
-
-	cancel()
-
-	tries := 1
-	for tries <= 3 {
-		if tries > 1 {
-			log.Printf("Retry %d of command %s for VIN %s ...\n", tries, command, vin)
-		}
-		if err = cmdFunc(w, r, car, body); err != nil {
-			log.Printf("Failed to process command %s: %s\n", command, err)
-			tries++
+			if err := execCommand(vin, command, body); err != nil {
+				log.Printf("command %s failed even after waking vehicle, giving up: %s\n", command, err)
+				sendInternalServerError(w)
+				return
+			}
 		} else {
-			log.Printf("Successfully processed command %s\n", command)
-			sendJSON(w, true)
+			log.Printf("could not exec command %s: %s\n", command, err)
+			sendInternalServerError(w)
 			return
 		}
 	}
-	log.Printf("Giving up on command %s for VIN %s after too many reties\n", command, vin)
-	sendBadRequest(w)
+	sendJSON(w, true)
 }
 
-func cmdPairVehicle(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
+func cmdPairVehicle(car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -169,7 +189,7 @@ func cmdPairVehicle(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle
 	return nil
 }
 
-func cmdWakeUp(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
+func cmdWakeUp(car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -179,7 +199,7 @@ func cmdWakeUp(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, bod
 	return nil
 }
 
-func cmdSetChargingAmps(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
+func cmdSetChargingAmps(car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -199,7 +219,7 @@ func cmdSetChargingAmps(w http.ResponseWriter, r *http.Request, car *vehicle.Veh
 	return nil
 }
 
-func cmdSetSocLimit(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
+func cmdSetSocLimit(car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -219,7 +239,20 @@ func cmdSetSocLimit(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle
 	return nil
 }
 
-func cmdChargeStart(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
+func cmdChargeEnable(car *vehicle.Vehicle, body map[string]interface{}) error {
+	enable, ok := body["enable"].(string)
+	if !ok {
+		return fmt.Errorf("failed to find enable in request body")
+	}
+
+	if enable == "true" {
+		return cmdChargeStart(car, body)
+	} else {
+		return cmdChargeStop(car, body)
+	}
+}
+
+func cmdChargeStart(car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -229,7 +262,7 @@ func cmdChargeStart(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle
 	return nil
 }
 
-func cmdChargeStop(w http.ResponseWriter, r *http.Request, car *vehicle.Vehicle, body map[string]interface{}) error {
+func cmdChargeStop(car *vehicle.Vehicle, body map[string]interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

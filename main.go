@@ -10,11 +10,9 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/teslamotors/vehicle-command/pkg/cache"
 	"github.com/teslamotors/vehicle-command/pkg/connector/ble"
 	"github.com/teslamotors/vehicle-command/pkg/protocol"
 	"github.com/teslamotors/vehicle-command/pkg/protocol/protobuf/universalmessage"
@@ -24,7 +22,7 @@ import (
 
 type cmdFunction func(*vehicle.Vehicle, map[string]interface{}) error
 
-var sessionCache = cache.New(5)
+// var sessionCache = cache.New(5)
 var commands = map[string]cmdFunction{
 	"pair":              cmdPairVehicle,
 	"wake_up":           cmdWakeUp,
@@ -72,7 +70,8 @@ func prepareConnection(vin string, command string) (error, *vehicle.Vehicle, *bl
 		return fmt.Errorf("failed to create BLE connection to vehicle: %s", err), nil, nil
 	}
 
-	car, err := vehicle.NewVehicle(conn, GetConfig().PrivateKey, sessionCache)
+	//car, err := vehicle.NewVehicle(conn, GetConfig().PrivateKey, sessionCache)
+	car, err := vehicle.NewVehicle(conn, GetConfig().PrivateKey, nil)
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("failed to create vehicle: %s", err), nil, conn
@@ -94,7 +93,7 @@ func prepareConnection(vin string, command string) (error, *vehicle.Vehicle, *bl
 			return fmt.Errorf("failed to perform handshake with vehicle: %s", err), nil, conn
 		}
 	}
-	defer car.UpdateCachedSessions(sessionCache)
+	//defer car.UpdateCachedSessions(sessionCache)
 
 	return nil, car, conn
 }
@@ -155,26 +154,19 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Executing command %s for VIN %s ...\n", command, vin)
-
-	if err := execCommand(vin, command, body); err != nil {
-		if strings.Contains(err.Error(), "context deadline exceeded") && command != "wake_up" {
-			log.Printf("command %s failed, vehicle could be asleep - trying to wake first...\n", command)
-			if err := execCommand(vin, "wake_up", body); err != nil {
-				log.Printf("waking vehicle failed, giving up: %s\n", err)
-				sendInternalServerError(w)
-				return
-			}
-			if err := execCommand(vin, command, body); err != nil {
-				log.Printf("command %s failed even after waking vehicle, giving up: %s\n", command, err)
-				sendInternalServerError(w)
-				return
-			}
-		} else {
-			log.Printf("could not exec command %s: %s\n", command, err)
+	if command != "wake_up" && command != "pair" {
+		if err := execCommand(vin, "wake_up", body); err != nil {
+			log.Printf("Waking vehicle failed, giving up: %s\n", err)
 			sendInternalServerError(w)
 			return
 		}
+		time.Sleep(2 * time.Second)
+	}
+
+	if err := execCommand(vin, command, body); err != nil {
+		log.Printf("could not exec command %s: %s\n", command, err)
+		sendInternalServerError(w)
+		return
 	}
 	sendJSON(w, true)
 }

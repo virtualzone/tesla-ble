@@ -50,14 +50,14 @@ A simple HTTP server sending commands controlling your Tesla's charging process 
 ### Set charging amps
    ```
    curl -X POST \
-   -d '{"charging_amps": 16}' \
+   -d '{"charging_amps": "16"}' \
    http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/set_charging_amps
    ```
 
 ### Set charging limit
    ```
    curl -X POST \
-   -d '{"soc_limit": 70}' \
+   -d '{"soc_limit": "70"}' \
    http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/set_soc_limit
    ```
 
@@ -71,6 +71,13 @@ A simple HTTP server sending commands controlling your Tesla's charging process 
    ```
    curl -X POST \
    http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/charge_stop
+   ```
+
+### Set charging state
+   ```
+   curl -X POST \
+   -d '{"enable": "true"}' \
+   http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/charge
    ```
 
 ## Using with evcc
@@ -90,14 +97,9 @@ vehicles:
       uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/set_charging_amps"
       method: POST
       body: '{"charging_amps": "{{.maxcurrent}}"}'
-    limitsoc:
-      source: http
-      uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/set_soc_limit"
-      method: POST
-      body: '{"soc_limit": "{{.limitsoc}}"}'
     chargeenable:
       source: http
-      uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/{{if .chargeenable}}charge_start{{else}}charge_stop{{end}}"
+      uri: "http://localhost:8080/api/1/vehicles/VEHICLE_VIN/command/charge"
       method: POST
-      body: ''
+      body: '{"enable": "{{.chargeenable}}"}'
 ```

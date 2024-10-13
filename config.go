@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/teslamotors/vehicle-command/pkg/protocol"
@@ -38,6 +39,12 @@ func (c *Config) ReadConfig() {
 	if privateKeyFile == "" {
 		log.Panicln("Need to specify PRIVATE_KEY")
 	}
+	if strings.Index(privateKeyFile, "http://") == 0 || strings.Index(privateKeyFile, "https://") == 0 {
+		if err := GetCacheHttpFile(privateKeyFile, "/tmp/private.pem"); err != nil {
+			log.Panicf("Could not load private key file via http: %s\n", err.Error())
+		}
+		privateKeyFile = "/tmp/private.pem"
+	}
 	privateKey, err := protocol.LoadPrivateKey(privateKeyFile)
 	if err != nil {
 		log.Panicf("Could not load private key: %s\n", err.Error())
@@ -47,6 +54,12 @@ func (c *Config) ReadConfig() {
 	publicKeyFile := c.getEnv("PUBLIC_KEY", "./public.pem")
 	if publicKeyFile == "" {
 		log.Panicln("Need to specify PUBLIC_KEY")
+	}
+	if strings.Index(publicKeyFile, "http://") == 0 || strings.Index(publicKeyFile, "https://") == 0 {
+		if err := GetCacheHttpFile(publicKeyFile, "/tmp/public.pem"); err != nil {
+			log.Panicf("Could not load public key file via http: %s\n", err.Error())
+		}
+		publicKeyFile = "/tmp/public.pem"
 	}
 	publicKey, err := protocol.LoadPublicKey(privateKeyFile)
 	if err != nil {

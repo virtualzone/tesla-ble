@@ -32,6 +32,7 @@ var commands = map[string]cmdFunction{
 	"charge":            cmdChargeEnable,
 	"charge_start":      cmdChargeStart,
 	"charge_stop":       cmdChargeStop,
+	"get_soc":           cmdGetSoc,
 }
 
 func main() {
@@ -41,10 +42,6 @@ func main() {
 
 func sendBadRequest(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusBadRequest)
-}
-
-func sendNotFound(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusNotFound)
 }
 
 func sendInternalServerError(w http.ResponseWriter) {
@@ -62,25 +59,25 @@ func sendJSON(w http.ResponseWriter, v interface{}) {
 	w.Write(json)
 }
 
-func prepareConnection(vin string, command string) (error, *vehicle.Vehicle, *ble.Connection) {
+func prepareConnection(vin string, command string) (*vehicle.Vehicle, *ble.Connection, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	conn, err := ble.NewConnection(ctx, vin)
 	if err != nil {
-		return fmt.Errorf("failed to create BLE connection to vehicle: %s", err), nil, nil
+		return nil, nil, fmt.Errorf("failed to create BLE connection to vehicle: %s", err)
 	}
 
 	//car, err := vehicle.NewVehicle(conn, GetConfig().PrivateKey, sessionCache)
 	car, err := vehicle.NewVehicle(conn, GetConfig().PrivateKey, nil)
 	if err != nil {
 		conn.Close()
-		return fmt.Errorf("failed to create vehicle: %s", err), nil, conn
+		return nil, conn, fmt.Errorf("failed to create vehicle: %s", err)
 	}
 
 	if err := car.Connect(ctx); err != nil {
 		conn.Close()
-		return fmt.Errorf("failed to connect to vehicle: %s", err), nil, conn
+		return nil, conn, fmt.Errorf("failed to connect to vehicle: %s", err)
 	}
 
 	if command != "pair" {
@@ -91,12 +88,12 @@ func prepareConnection(vin string, command string) (error, *vehicle.Vehicle, *bl
 		if err := car.StartSession(ctx, domains); err != nil {
 			car.Disconnect()
 			conn.Close()
-			return fmt.Errorf("failed to perform handshake with vehicle: %s", err), nil, conn
+			return nil, conn, fmt.Errorf("failed to perform handshake with vehicle: %s", err)
 		}
 	}
 	//defer car.UpdateCachedSessions(sessionCache)
 
-	return nil, car, conn
+	return car, conn, nil
 }
 
 func retryCommand(vin string, command string, car *vehicle.Vehicle, cmdFunc cmdFunction, body map[string]interface{}) error {
@@ -125,7 +122,7 @@ func execCommand(vin string, command string, body map[string]interface{}) error 
 
 	log.Printf("Executing command %s for VIN %s ...\n", command, vin)
 
-	err, car, conn := prepareConnection(vin, command)
+	car, conn, err := prepareConnection(vin, command)
 	if err != nil {
 		return fmt.Errorf("could not prepare vehicle connection: %s", err)
 	}
@@ -155,7 +152,7 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if command != "wake_up" && command != "pair" {
+	if command != "wake_up" && command != "pair" && command != "get_soc" {
 		if err := execCommand(vin, "wake_up", body); err != nil {
 			log.Printf("Waking vehicle failed, giving up: %s\n", err)
 			sendInternalServerError(w)
@@ -269,6 +266,10 @@ func cmdChargeStop(car *vehicle.Vehicle, body map[string]interface{}) error {
 		return fmt.Errorf("failed to stop charging: %s", err)
 	}
 	return nil
+}
+
+func cmdGetSoc(car *vehicle.Vehicle, body map[string]interface{}) error {
+	return fmt.Errorf("get soc not supported via BLE, see: %s", "https://github.com/teslamotors/vehicle-command/issues/52")
 }
 
 func serveHTTP() {

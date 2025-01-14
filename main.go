@@ -60,7 +60,11 @@ func sendJSON(w http.ResponseWriter, v interface{}) {
 }
 
 func prepareConnection(vin string, command string) (*vehicle.Vehicle, *ble.Connection, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeout := 30 * time.Second
+	if strings.Index(command, "get_") == 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	conn, err := ble.NewConnection(ctx, vin)
@@ -337,7 +341,7 @@ func cmdChargeStop(car *vehicle.Vehicle, body map[string]interface{}) error {
 }
 
 func getSoc(car *vehicle.Vehicle) (int32, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)
@@ -348,7 +352,7 @@ func getSoc(car *vehicle.Vehicle) (int32, error) {
 }
 
 func getLimitSoc(car *vehicle.Vehicle) (int32, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)
@@ -359,7 +363,7 @@ func getLimitSoc(car *vehicle.Vehicle) (int32, error) {
 }
 
 func getBatteryRange(car *vehicle.Vehicle) (float32, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)
@@ -370,7 +374,7 @@ func getBatteryRange(car *vehicle.Vehicle) (float32, error) {
 }
 
 func getChargeState(car *vehicle.Vehicle) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)

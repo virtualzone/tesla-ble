@@ -211,7 +211,7 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !needWakeUp(command) {
+	if needWakeUp(command) {
 		if err := execCommand(vin, "wake_up", body); err != nil {
 			log.Printf("Waking vehicle failed, giving up: %s\n", err)
 			sendInternalServerError(w)

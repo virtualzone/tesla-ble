@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,6 @@ var commands = map[string]cmdFunction{
 	"charge":            cmdChargeEnable,
 	"charge_start":      cmdChargeStart,
 	"charge_stop":       cmdChargeStop,
-	"get_soc":           cmdGetSoc,
 }
 
 func main() {
@@ -114,6 +114,55 @@ func retryCommand(vin string, command string, car *vehicle.Vehicle, cmdFunc cmdF
 	return errors.New("too many retries")
 }
 
+func execDataCommand(vin string, command string, w http.ResponseWriter) error {
+	log.Printf("Executing get data command %s for VIN %s ...\n", command, vin)
+
+	car, conn, err := prepareConnection(vin, command)
+	if err != nil {
+		return fmt.Errorf("could not prepare vehicle connection: %s", err)
+	}
+	defer conn.Close()
+	defer car.Disconnect()
+
+	if command == "get_soc" {
+		res, err := getSoc(car)
+		if err != nil {
+			return fmt.Errorf("could not get soc: %s", err)
+		}
+		sendJSON(w, res)
+		return nil
+	}
+
+	if command == "get_soc_limit" {
+		res, err := getLimitSoc(car)
+		if err != nil {
+			return fmt.Errorf("could not get soc limit: %s", err)
+		}
+		sendJSON(w, res)
+		return nil
+	}
+
+	if command == "get_battery_range" {
+		res, err := getBatteryRange(car)
+		if err != nil {
+			return fmt.Errorf("could not get battery range: %s", err)
+		}
+		sendJSON(w, res)
+		return nil
+	}
+
+	if command == "get_charge_state" {
+		res, err := getChargeState(car)
+		if err != nil {
+			return fmt.Errorf("could not get charge state: %s", err)
+		}
+		sendJSON(w, res)
+		return nil
+	}
+
+	return nil
+}
+
 func execCommand(vin string, command string, body map[string]interface{}) error {
 	cmdFunc, ok := commands[command]
 	if !ok {
@@ -135,6 +184,16 @@ func execCommand(vin string, command string, body map[string]interface{}) error 
 	return nil
 }
 
+func needWakeUp(command string) bool {
+	var wakeCommands = []string{"wake_up", "pair"}
+	return !slices.Contains(wakeCommands, command) && !isDataCommand(command)
+}
+
+func isDataCommand(command string) bool {
+	var dataCommands = []string{"get_soc", "get_soc_limit", "get_battery_range", "get_charge_state"}
+	return slices.Contains(dataCommands, command)
+}
+
 func handleCommand(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	vin := vars["vin"]
@@ -152,13 +211,22 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if command != "wake_up" && command != "pair" && command != "get_soc" {
+	if !needWakeUp(command) {
 		if err := execCommand(vin, "wake_up", body); err != nil {
 			log.Printf("Waking vehicle failed, giving up: %s\n", err)
 			sendInternalServerError(w)
 			return
 		}
 		time.Sleep(5 * time.Second)
+	}
+
+	if isDataCommand(command) {
+		if err := execDataCommand(vin, command, w); err != nil {
+			log.Printf("could not exec command %s: %s\n", command, err)
+			sendInternalServerError(w)
+			return
+		}
+		return
 	}
 
 	if err := execCommand(vin, command, body); err != nil {
@@ -268,8 +336,55 @@ func cmdChargeStop(car *vehicle.Vehicle, body map[string]interface{}) error {
 	return nil
 }
 
-func cmdGetSoc(car *vehicle.Vehicle, body map[string]interface{}) error {
-	return fmt.Errorf("get soc not supported via BLE, see: %s", "https://github.com/teslamotors/vehicle-command/issues/52")
+func getSoc(car *vehicle.Vehicle) (int32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get state: %s", err)
+	}
+	return data.GetChargeState().GetBatteryLevel(), nil
+}
+
+func getLimitSoc(car *vehicle.Vehicle) (int32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get state: %s", err)
+	}
+	return data.GetChargeState().GetChargeLimitSoc(), nil
+}
+
+func getBatteryRange(car *vehicle.Vehicle) (float32, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get state: %s", err)
+	}
+	return data.GetChargeState().GetBatteryRange(), nil
+}
+
+func getChargeState(car *vehicle.Vehicle) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	data, err := car.GetState(ctx, vehicle.StateCategoryCharge)
+	if err != nil {
+		return "A", fmt.Errorf("failed to get state: %s", err)
+	}
+	state := data.GetChargeState().GetChargingState()
+	if state.GetCharging() != nil {
+		return "C", nil
+	}
+	if state.GetStopped() != nil || state.GetNoPower() != nil || state.GetComplete() != nil {
+		return "B", nil
+	}
+	return "A", nil
 }
 
 func serveHTTP() {

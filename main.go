@@ -23,6 +23,9 @@ import (
 )
 
 type cmdFunction func(*vehicle.Vehicle, map[string]interface{}) error
+type getDataFunction func(*vehicle.Vehicle) (interface{}, error)
+
+var errCmdNotFound = errors.New("command not found")
 
 // var sessionCache = cache.New(5)
 var commands = map[string]cmdFunction{
@@ -35,13 +38,24 @@ var commands = map[string]cmdFunction{
 	"charge_stop":       cmdChargeStop,
 }
 
+var dataCommands = map[string]getDataFunction{
+	"get_soc":           getSoc,
+	"get_soc_limit":     getLimitSoc,
+	"get_battery_range": getBatteryRange,
+	"get_charge_state":  getChargeState,
+}
+
 func main() {
-	log.Println("Starting chargebot.io Tesla BLE Controller...")
+	log.Println("Starting virtualzone.de Tesla BLE Controller...")
 	serveHTTP()
 }
 
 func sendBadRequest(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusBadRequest)
+}
+
+func sendNotFound(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
 }
 
 func sendInternalServerError(w http.ResponseWriter) {
@@ -118,59 +132,32 @@ func retryCommand(vin string, command string, car *vehicle.Vehicle, cmdFunc cmdF
 	return errors.New("too many retries")
 }
 
-func execDataCommand(vin string, command string, w http.ResponseWriter) error {
+func execDataCommand(vin string, command string) (interface{}, error) {
+	cmdFunc, ok := dataCommands[command]
+	if !ok {
+		return nil, errCmdNotFound
+	}
+
 	log.Printf("Executing get data command %s for VIN %s ...\n", command, vin)
 
 	car, conn, err := prepareConnection(vin, command)
 	if err != nil {
-		return fmt.Errorf("could not prepare vehicle connection: %s", err)
+		return nil, fmt.Errorf("could not prepare vehicle connection: %s", err)
 	}
 	defer conn.Close()
 	defer car.Disconnect()
 
-	if command == "get_soc" {
-		res, err := getSoc(car)
-		if err != nil {
-			return fmt.Errorf("could not get soc: %s", err)
-		}
-		sendJSON(w, res)
-		return nil
+	res, err := cmdFunc(car)
+	if err != nil {
+		return nil, fmt.Errorf("could not get data: %s", err)
 	}
-
-	if command == "get_soc_limit" {
-		res, err := getLimitSoc(car)
-		if err != nil {
-			return fmt.Errorf("could not get soc limit: %s", err)
-		}
-		sendJSON(w, res)
-		return nil
-	}
-
-	if command == "get_battery_range" {
-		res, err := getBatteryRange(car)
-		if err != nil {
-			return fmt.Errorf("could not get battery range: %s", err)
-		}
-		sendJSON(w, res)
-		return nil
-	}
-
-	if command == "get_charge_state" {
-		res, err := getChargeState(car)
-		if err != nil {
-			return fmt.Errorf("could not get charge state: %s", err)
-		}
-		sendJSON(w, res)
-		return nil
-	}
-
-	return nil
+	return res, nil
 }
 
 func execCommand(vin string, command string, body map[string]interface{}) error {
 	cmdFunc, ok := commands[command]
 	if !ok {
-		return fmt.Errorf("invalid command %s", command)
+		return errCmdNotFound
 	}
 
 	log.Printf("Executing command %s for VIN %s ...\n", command, vin)
@@ -190,15 +177,33 @@ func execCommand(vin string, command string, body map[string]interface{}) error 
 
 func needWakeUp(command string) bool {
 	var wakeCommands = []string{"wake_up", "pair"}
-	return !slices.Contains(wakeCommands, command) && !isDataCommand(command)
+	return !slices.Contains(wakeCommands, command)
 }
 
-func isDataCommand(command string) bool {
-	var dataCommands = []string{"get_soc", "get_soc_limit", "get_battery_range", "get_charge_state"}
-	return slices.Contains(dataCommands, command)
+func handleGetDataCommand(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	vin := vars["vin"]
+	command := vars["command"]
+
+	if vin == "" {
+		sendBadRequest(w)
+		return
+	}
+
+	res, err := execDataCommand(vin, command)
+	if err != nil {
+		if errors.Is(err, errCmdNotFound) {
+			sendNotFound(w)
+			return
+		}
+		log.Printf("could not exec command %s: %s\n", command, err)
+		sendInternalServerError(w)
+		return
+	}
+	sendJSON(w, res)
 }
 
-func handleCommand(w http.ResponseWriter, r *http.Request) {
+func handleExecCommand(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	vin := vars["vin"]
 	command := vars["command"]
@@ -224,16 +229,11 @@ func handleCommand(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Second)
 	}
 
-	if isDataCommand(command) {
-		if err := execDataCommand(vin, command, w); err != nil {
-			log.Printf("could not exec command %s: %s\n", command, err)
-			sendInternalServerError(w)
+	if err := execCommand(vin, command, body); err != nil {
+		if errors.Is(err, errCmdNotFound) {
+			sendNotFound(w)
 			return
 		}
-		return
-	}
-
-	if err := execCommand(vin, command, body); err != nil {
 		log.Printf("could not exec command %s: %s\n", command, err)
 		sendInternalServerError(w)
 		return
@@ -340,7 +340,7 @@ func cmdChargeStop(car *vehicle.Vehicle, body map[string]interface{}) error {
 	return nil
 }
 
-func getSoc(car *vehicle.Vehicle) (int32, error) {
+func getSoc(car *vehicle.Vehicle) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -351,7 +351,7 @@ func getSoc(car *vehicle.Vehicle) (int32, error) {
 	return data.GetChargeState().GetBatteryLevel(), nil
 }
 
-func getLimitSoc(car *vehicle.Vehicle) (int32, error) {
+func getLimitSoc(car *vehicle.Vehicle) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -362,7 +362,7 @@ func getLimitSoc(car *vehicle.Vehicle) (int32, error) {
 	return data.GetChargeState().GetChargeLimitSoc(), nil
 }
 
-func getBatteryRange(car *vehicle.Vehicle) (float32, error) {
+func getBatteryRange(car *vehicle.Vehicle) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -373,7 +373,7 @@ func getBatteryRange(car *vehicle.Vehicle) (float32, error) {
 	return data.GetChargeState().GetBatteryRange(), nil
 }
 
-func getChargeState(car *vehicle.Vehicle) (string, error) {
+func getChargeState(car *vehicle.Vehicle) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -393,7 +393,8 @@ func getChargeState(car *vehicle.Vehicle) (string, error) {
 
 func serveHTTP() {
 	router := mux.NewRouter()
-	router.HandleFunc("/api/1/vehicles/{vin}/command/{command}", handleCommand).Methods("POST")
+	router.HandleFunc("/api/1/vehicles/{vin}/command/{command}", handleExecCommand).Methods("POST")
+	router.HandleFunc("/api/1/vehicles/{vin}/data/{command}", handleGetDataCommand).Methods("GET")
 
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("0.0.0.0:%d", GetConfig().Port),

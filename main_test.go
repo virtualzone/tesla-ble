@@ -9,7 +9,4 @@ func Test_NeedWakeUp(t *testing.T) {
 	if needWakeUp("pair") == true {
 		t.Error("Expected false, got ", true)
 	}
-	if needWakeUp("get_soc") == true {
-		t.Error("Expected false, got ", true)
-	}
 }

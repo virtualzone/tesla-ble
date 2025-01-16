@@ -1,2 +1,2 @@
 #!/bin/sh
-go run `ls *.go | grep -v _test.go`
+USERNAME=test PASSWORD=1234 go run `ls *.go | grep -v _test.go`

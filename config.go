@@ -15,6 +15,8 @@ type Config struct {
 	Port       int
 	PrivateKey protocol.ECDHPrivateKey
 	PublicKey  *ecdh.PublicKey
+	Username   string
+	Password   string
 }
 
 var _configInstance *Config
@@ -34,6 +36,9 @@ func (c *Config) ReadConfig() {
 		log.Panicln("PORT must be numeric")
 	}
 	c.Port = port
+
+	c.Username = c.getEnv("USERNAME", "")
+	c.Password = c.getEnv("PASSWORD", "")
 
 	privateKeyFile := c.getEnv("PRIVATE_KEY", "./private.pem")
 	if privateKeyFile == "" {

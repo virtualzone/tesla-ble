@@ -6,7 +6,7 @@ toolchain go1.23.2
 
 require (
 	github.com/gorilla/mux v1.8.1
-	github.com/teslamotors/vehicle-command v0.3.0
+	github.com/teslamotors/vehicle-command v0.3.2
 )
 
 require (
@@ -22,5 +22,5 @@ require (
 	github.com/raff/goble v0.0.0-20200327175727-d63360dcfd80 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	golang.org/x/sys v0.29.0 // indirect
-	google.golang.org/protobuf v1.36.2 // indirect
+	google.golang.org/protobuf v1.36.3 // indirect
 )

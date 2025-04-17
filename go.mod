@@ -6,14 +6,14 @@ toolchain go1.23.2
 
 require (
 	github.com/gorilla/mux v1.8.1
-	github.com/teslamotors/vehicle-command v0.3.3
+	github.com/teslamotors/vehicle-command v0.3.4
 )
 
 require (
 	github.com/JuulLabs-OSS/cbgo v0.0.2 // indirect
 	github.com/cronokirby/saferith v0.33.0 // indirect
 	github.com/go-ble/ble v0.0.0-20240122180141-8c5522f54333 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect

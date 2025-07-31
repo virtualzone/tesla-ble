@@ -6,7 +6,7 @@ toolchain go1.23.2
 
 require (
 	github.com/gorilla/mux v1.8.1
-	github.com/teslamotors/vehicle-command v0.3.4
+	github.com/teslamotors/vehicle-command v0.4.0
 )
 
 require (

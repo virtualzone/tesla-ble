@@ -46,8 +46,8 @@ github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXf
 github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81PSLYec5m4=
 github.com/stretchr/testify v1.7.0 h1:nwc3DEeHmmLAfoZucVR881uASk0Mfjw8xYJ99tb5CcY=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
-github.com/teslamotors/vehicle-command v0.3.4 h1:77admcqrFSF2Qa00z1paLYq8h8w4+cZ1nwadg/vghno=
-github.com/teslamotors/vehicle-command v0.3.4/go.mod h1:l7Rxdpd/9QBnQnj6NQ/w4Vb5OSE1cB7okS4qmf+rIwI=
+github.com/teslamotors/vehicle-command v0.4.0 h1:39JJ7wGdS3dmW3tlsshg2C9/YWx+fxaUw6aRKfqWmpc=
+github.com/teslamotors/vehicle-command v0.4.0/go.mod h1:aL0IRpLu+l205NxejRkuxpqAovw69rDKriBKKyP8gLI=
 github.com/urfave/cli v1.22.2/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
 golang.org/x/sys v0.0.0-20190422165155-953cdadca894/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200116001909-b77594299b42/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
